@@ -1,0 +1,47 @@
+pipeline {
+	agent any
+
+	environment {
+		APP_NAME = 'myapp'
+		DEPLOY_DIR = '/opt/myapp'
+	}
+
+	stages {
+		stage('Checkout Code') {
+			steps {
+				git 'https://github.com/your-repo.git'
+			}
+		}
+
+		stage('Build with Maven') {
+			steps {
+				sh 'mvn clean package'
+			}
+		}
+
+		stage('Deploy Locally') {
+			steps {
+				sh '''
+                echo "Stopping existing application..."
+                pkill -f "$APP_NAME" || true
+
+                echo "Deploying new application..."
+                mkdir -p $DEPLOY_DIR
+                cp target/*.jar $DEPLOY_DIR/app.jar
+
+                echo "Starting application..."
+                nohup java -jar $DEPLOY_DIR/app.jar > $DEPLOY_DIR/app.log 2>&1 &
+                '''
+			}
+		}
+	}
+
+	post {
+		success {
+			echo 'Deployment Successful!'
+		}
+		failure {
+			echo 'Deployment Failed!'
+		}
+	}
+}

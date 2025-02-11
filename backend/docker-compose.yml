@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:latest
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 12345
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  shopease:
+    build: .
+    container_name: shopease_app
+    restart: always
+    depends_on:
+      - postgres
+    environment:
+      SPRING_APPLICATION_NAME: shopease
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: 12345
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_SHOW_SQL: "true"
+      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.PostgreSQLDialect
+      SPRING_MAIL_HOST: smtp.gmail.com
+      SPRING_MAIL_PORT: 587
+      SPRING_MAIL_USERNAME: venkatbhupathi777@gmail.com
+      SPRING_MAIL_PASSWORD: bthabbowkwyrvxvp
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: "true"
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: "true"
+      JWT_AUTH_APP: authapp
+      JWT_AUTH_SECRET_KEY: /qMqFLzoLdkOuntrozKBNeBhMKMi4Qy/6EG/z9i6ce4=
+      JWT_AUTH_EXPIRES_IN: 3600
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_ID: 721980138097-m5ci1k5q005e2i2hknke2nf9o8gi6gm7.apps.googleusercontent.com
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_SECRET: 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
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_SCOPE: profile, email
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_REDIRECT_URI: "{baseUrl}/login/oauth2/code/google"
+      SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_GOOGLE_AUTHORIZATION_URI: https://accounts.google.com/o/oauth2/auth
+      SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_GOOGLE_TOKEN_URI: https://oauth2.googleapis.com/token
+      SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_GOOGLE_USER_INFO_URI: https://www.googleapis.com/oauth2/v3/userinfo
+      STRIPE_SECRET: sk_test_51QplmXAMTMvs07jY4nOCxGXxO9t0GwRqdSDWkwJCbWBfl1QPdsTCYsk3wVKMIDvWW5BGUCOFzlWmf6qKLhF2JR7C00qe4zUiKc
+      FILE_ZONE: us-east-1
+
+      FILE_UPLOAD_API_KEY: AKIAQ3EGTEG7F5Y3EOCI
+      FILE_UPLOAD_HOST_URL: https://filestorage2003.s3.amazonaws.com
+    ports:
+      - "8080:8080"
+
+
+volumes:
+  postgres_data:
