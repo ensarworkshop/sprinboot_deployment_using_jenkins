@@ -2,46 +2,183 @@ pipeline {
 	agent any
 
 	environment {
-		APP_NAME = 'myapp'
-		DEPLOY_DIR = '/opt/myapp'
+		IMAGE_NAME = 'myregistry/shopease:latest'
+		CONTAINER_NAME = 'shopease'
+		DOTENV = credentials('MY_ENV_CREDENTIALS')
+		DOCKER_HUB_CREDS = credentials('DOCKER_HUB_CREDENTIALS')  // Using a single credential for Docker Hub
+		MAVEN_OPTS = '-Dmaven.test.skip=true'  // Skip tests during build
+	}
+
+	options {
+		timeout(time: 1, unit: 'HOURS')  // Pipeline timeout
+		disableConcurrentBuilds()        // Prevent parallel runs4
+		buildDiscarder(logRotator(numToKeepStr: '5'))  // Keep only last 5 builds
 	}
 
 	stages {
+		stage('Validate Tools') {
+			steps {
+				script {
+					// Check if required tools are available
+					sh '''
+                        echo "Checking required tools..."
+                        which git || (echo "Git not found" && exit 1)
+                        which mvn || (echo "Maven not found" && exit 1)
+                        which docker || (echo "Docker not found" && exit 1)
+                        docker info || (echo "Docker daemon not running" && exit 1)
+                    '''
+				}
+			}
+		}
+
 		stage('Checkout Code') {
 			steps {
-				git 'https://github.com/your-repo.git'
+				script {
+					try {
+						git branch: 'main',
+						url: 'https://github.com/ensarworkshop/sprinboot_deployment_using_jenkins.git',
+						changelog: true
+					} catch (Exception e) {
+						error "Failed to checkout code: ${e.getMessage()}"
+					}
+				}
 			}
 		}
 
 		stage('Build with Maven') {
 			steps {
-				sh 'mvn clean package'
+				script {
+					try {
+						// Clean workspace before build
+						sh 'mvn clean'
+
+						// Run the build with a timeout
+						timeout(time: 15, unit: 'MINUTES') {
+							sh 'mvn package -DskipTests'
+						}
+					} catch (Exception e) {
+						error "Maven build failed: ${e.getMessage()}"
+					}
+				}
+			}
+			post {
+				success {
+					archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+				}
 			}
 		}
 
-		stage('Deploy Locally') {
+		stage('Build Docker Image') {
 			steps {
-				sh '''
-                echo "Stopping existing application..."
-                pkill -f "$APP_NAME" || true
+				script {
+					try {
+						// Add build timestamp to tag
+						def buildTag = new Date().format('yyyyMMdd_HHmmss')
+						env.IMAGE_TAG = "${env.IMAGE_NAME}-${buildTag}"
 
-                echo "Deploying new application..."
-                mkdir -p $DEPLOY_DIR
-                cp target/*.jar $DEPLOY_DIR/app.jar
+						sh """
+                            echo "Building Docker image with tag: ${env.IMAGE_TAG}"
+                            docker build -t ${env.IMAGE_TAG} \
+                                --build-arg BUILD_DATE=\$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+                                --build-arg VCS_REF=\$(git rev-parse --short HEAD) \
+                                .
+                            docker tag ${env.IMAGE_TAG} ${env.IMAGE_NAME}
+                        """
+					} catch (Exception e) {
+						error "Docker build failed: ${e.getMessage()}"
+					}
+				}
+			}
+		}
 
-                echo "Starting application..."
-                nohup java -jar $DEPLOY_DIR/app.jar > $DEPLOY_DIR/app.log 2>&1 &
-                '''
+		stage('Run Docker Container') {
+			steps {
+				script {
+					try {
+						sh """
+                            echo "Stopping existing container if running..."
+                            docker stop ${env.CONTAINER_NAME} || true
+                            docker rm ${env.CONTAINER_NAME} || true
+
+                            echo "Starting new container..."
+                            docker run -d \
+                                -p 8080:8080 \
+                                --name ${env.CONTAINER_NAME} \
+                                --restart unless-stopped \
+                                -e SPRING_PROFILES_ACTIVE=prod \
+                                ${env.IMAGE_NAME}
+
+                            echo "Waiting for container to start..."
+                            sleep 10
+                            docker ps | grep ${env.CONTAINER_NAME} || (echo "Container failed to start" && exit 1)
+                        """
+					} catch (Exception e) {
+						error "Failed to run container: ${e.getMessage()}"
+					}
+				}
+			}
+		}
+
+		stage('Push to Docker Hub') {
+			when {
+				expression { return env.DOCKER_HUB_CREDS != null }
+				branch 'main'  // Only push from main branch
+			}
+			steps {
+				script {
+					try {
+						withCredentials([usernamePassword(
+							credentialsId: 'DOCKER_HUB_CREDENTIALS',
+							usernameVariable: 'DOCKER_USER',
+							passwordVariable: 'DOCKER_PASS'
+						)]) {
+							sh """
+                                echo "Logging into Docker Hub..."
+                                echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin
+
+                                echo "Pushing image to Docker Hub..."
+                                docker push ${env.IMAGE_NAME}
+                                docker push ${env.IMAGE_TAG}
+
+                                echo "Logging out from Docker Hub..."
+                                docker logout
+                            """
+						}
+					} catch (Exception e) {
+						error "Failed to push to Docker Hub: ${e.getMessage()}"
+					}
+				}
 			}
 		}
 	}
 
 	post {
 		success {
-			echo 'Deployment Successful!'
+			script {
+				currentBuild.description = "Image: ${env.IMAGE_TAG}"
+				echo 'Deployment Successful!'
+			}
 		}
 		failure {
-			echo 'Deployment Failed!'
+			echo 'Deployment Failed! Check logs for details.'
+		}
+		always {
+			// Cleanup
+			sh '''
+                echo "Cleaning up..."
+                docker system prune -f
+            '''
+
+			// Send notification (uncomment and configure as needed)
+			/*
+			emailext (
+				subject: "Pipeline ${currentBuild.result}: ${env.JOB_NAME}",
+				body: """Pipeline ${currentBuild.result}: ${env.JOB_NAME}
+					Build: ${env.BUILD_NUMBER}
+					More info: ${env.BUILD_URL}""",
+				recipientProviders: [[$class: 'DevelopersRecipientProvider']]
+			)
+			*/
 		}
 	}
 }
